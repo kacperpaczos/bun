@@ -581,8 +581,6 @@ pub const TestCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         if (comptime is_bindgen) unreachable;
 
-        Output.is_github_action = Output.isGithubAction();
-
         // print the version so you know its doing stuff if it takes a sec
         Output.prettyErrorln("<r><b>bun test <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
@@ -672,6 +670,12 @@ pub const TestCommand = struct {
         try vm.bundler.configureDefines();
 
         vm.loadExtraEnv();
+        if (env_loader.get("GITHUB_ACTIONS")) |value| {
+            if (strings.eqlComptime(value, "true")) {
+                Output.is_github_action = true;
+            }
+        }
+
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 

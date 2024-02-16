@@ -2638,9 +2638,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             req.endStream(true);
             if (comptime debug_mode) {
                 if (!err.isEmptyOrUndefinedOrNull()) {
-                    var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(req.allocator);
-                    defer exception_list.deinit();
-                    req.server.vm.runErrorHandler(err, &exception_list);
+                    req.server.vm.onUnhandledError(req.server.vm.global, err);
                 }
             }
             req.finalize();
@@ -2917,7 +2915,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(this.allocator);
             defer exception_list.deinit();
             if (comptime debug_mode) {
-                vm.runErrorHandler(value, &exception_list);
+                vm.onUnhandledError(vm.global, value);
 
                 this.renderDefaultError(
                     vm.log,
@@ -2928,7 +2926,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 );
             } else {
                 if (status != 404)
-                    vm.runErrorHandler(value, &exception_list);
+                    vm.onUnhandledError(vm.global, value);
                 this.renderProductionError(status);
             }
 
@@ -3778,7 +3776,7 @@ pub const ServerWebSocket = struct {
             }
 
             if (error_handler.isEmptyOrUndefinedOrNull()) {
-                globalObject.bunVM().runErrorHandler(err_value, null);
+                globalObject.bunVM().onUnhandledError(globalObject, err_value);
             } else {
                 const corky = [_]JSValue{err_value};
                 corker.args = &corky;
@@ -3861,7 +3859,7 @@ pub const ServerWebSocket = struct {
 
         if (result.toError()) |err_value| {
             if (this.handler.onError.isEmptyOrUndefinedOrNull()) {
-                globalObject.bunVM().runErrorHandler(err_value, null);
+                globalObject.bunVM().onUnhandledError(globalObject, err_value);
             } else {
                 const args = [_]JSValue{err_value};
                 corker.args = &args;
@@ -3907,7 +3905,7 @@ pub const ServerWebSocket = struct {
 
             if (result.toError()) |err_value| {
                 if (this.handler.onError.isEmptyOrUndefinedOrNull()) {
-                    globalObject.bunVM().runErrorHandler(err_value, null);
+                    globalObject.bunVM().onUnhandledError(globalObject, err_value);
                 } else {
                     const args = [_]JSValue{err_value};
                     corker.args = &args;
@@ -3957,7 +3955,7 @@ pub const ServerWebSocket = struct {
 
         if (result.toError()) |err| {
             log("onPing error", .{});
-            handler.globalObject.bunVM().runErrorHandler(err, null);
+            handler.globalObject.bunVM().onUnhandledError(globalThis, err);
         }
     }
 
@@ -3999,7 +3997,7 @@ pub const ServerWebSocket = struct {
 
         if (result.toError()) |err| {
             log("onPong error", .{});
-            handler.globalObject.bunVM().runErrorHandler(err, null);
+            handler.globalObject.bunVM().onUnhandledError(globalThis, err);
         }
     }
 
@@ -4028,7 +4026,7 @@ pub const ServerWebSocket = struct {
 
             if (result.toError()) |err| {
                 log("onClose error", .{});
-                globalObject.bunVM().runErrorHandler(err, null);
+                globalObject.bunVM().onUnhandledError(globalObject, err);
             }
         }
 

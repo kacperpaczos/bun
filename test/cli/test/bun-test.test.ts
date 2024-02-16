@@ -572,6 +572,22 @@ describe("bun test", () => {
       });
       expect(stderr).toMatch(/::error title=error: Oops!::/);
     });
+    test("should not annotate SuppressedError", () => {
+      const stderr = runTest({
+        input: `
+          import { test, expect } from "bun:test";
+          test("fail", () => {
+            throw new SuppressedError("Oops!");
+          });
+        `,
+        env: {
+          FORCE_COLOR: "1",
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      // Once for the error, once for the preview, but not for the annotation
+      expect(stderr).not.toIncludeRepeated("SuppressedError", 3);
+    });
     test("should annotate a test timeout", () => {
       const stderr = runTest({
         input: `

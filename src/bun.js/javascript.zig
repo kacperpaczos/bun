@@ -2016,12 +2016,12 @@ pub const VirtualMachine = struct {
         exception_list: ?*ExceptionList,
         comptime Writer: type,
         writer: Writer,
-        comptime allow_side_effects: bool,
+        comptime is_fatal: bool,
     ) void {
         if (Output.enable_ansi_colors) {
-            this.printErrorlikeObject(exception.value(), exception, exception_list, Writer, writer, true, allow_side_effects);
+            this.printErrorlikeObject(exception.value(), exception, exception_list, Writer, writer, true, is_fatal);
         } else {
-            this.printErrorlikeObject(exception.value(), exception, exception_list, Writer, writer, false, allow_side_effects);
+            this.printErrorlikeObject(exception.value(), exception, exception_list, Writer, writer, false, is_fatal);
         }
     }
 
@@ -2369,7 +2369,7 @@ pub const VirtualMachine = struct {
         comptime Writer: type,
         writer: Writer,
         comptime allow_ansi_color: bool,
-        comptime allow_side_effects: bool,
+        comptime is_fatal: bool,
     ) void {
         if (comptime JSC.is_bindgen) {
             return;
@@ -2412,7 +2412,7 @@ pub const VirtualMachine = struct {
                 }
                 inline fn iterator(_: [*c]VM, _: [*c]JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
                     const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
-                    VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, Writer, this_.writer, color, allow_side_effects);
+                    VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, Writer, this_.writer, color, is_fatal);
                 }
             };
             var iter = AggregateErrorIterator{ .writer = writer, .current_exception_list = exception_list };
@@ -2430,7 +2430,7 @@ pub const VirtualMachine = struct {
             Writer,
             writer,
             allow_ansi_color,
-            allow_side_effects,
+            is_fatal,
         );
     }
 
@@ -2441,7 +2441,7 @@ pub const VirtualMachine = struct {
         comptime Writer: type,
         writer: Writer,
         comptime allow_ansi_color: bool,
-        comptime allow_side_effects: bool,
+        comptime is_fatal: bool,
     ) bool {
         if (value.jsType() == .DOMWrapper) {
             if (value.as(JSC.BuildMessage)) |build_error| {
@@ -2489,7 +2489,7 @@ pub const VirtualMachine = struct {
             Writer,
             writer,
             allow_ansi_color,
-            allow_side_effects,
+            is_fatal,
         ) catch |err| {
             if (comptime Environment.isDebug) {
                 // yo dawg
@@ -2755,7 +2755,7 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool, comptime allow_side_effects: bool) anyerror!void {
+    pub fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool, comptime is_fatal: bool) anyerror!void {
         var exception_holder = ZigException.Holder.init();
         var exception = exception_holder.zigException();
         defer exception_holder.deinit();
@@ -2764,8 +2764,10 @@ pub const VirtualMachine = struct {
         this.had_errors = true;
         defer this.had_errors = prev_had_errors;
 
-        if (allow_side_effects and Output.is_github_action) {
-            defer printGithubAnnotation(exception);
+        if (comptime is_fatal) {
+            if (Output.is_github_action) {
+                defer printGithubAnnotation(exception);
+            }
         }
 
         const line_numbers = exception.stack.source_lines_numbers[0..exception.stack.source_lines_len];
@@ -2973,7 +2975,7 @@ pub const VirtualMachine = struct {
 
         for (errors_to_append.items) |err| {
             try writer.writeAll("\n");
-            try this.printErrorInstance(err, exception_list, Writer, writer, allow_ansi_color, allow_side_effects);
+            try this.printErrorInstance(err, exception_list, Writer, writer, allow_ansi_color, is_fatal);
         }
     }
 
@@ -3002,6 +3004,10 @@ pub const VirtualMachine = struct {
     // https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-error-message
     pub fn printGithubAnnotation(exception: *JSC.ZigException) void {
         const name = exception.name;
+
+        // Do not print SuppressedError, so developers can suppress errors from Github Actions
+        if (name.eqlComptime("SuppressedError")) return;
+
         const message = exception.message;
         const frames = exception.stack.frames();
         const top_frame = if (frames.len > 0) frames[0] else null;
@@ -3078,6 +3084,7 @@ pub const VirtualMachine = struct {
                 defer source_url.deinit();
                 const file = bun.path.relative(dir, source_url.slice());
                 const func = frame.function_name.toUTF8(allocator);
+                defer func.deinit();
 
                 if (file.len == 0 and func.len == 0) continue;
 
