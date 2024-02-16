@@ -236,7 +236,7 @@ describe("streaming", () => {
             return new Response(
               new ReadableStream({
                 pull(controller) {
-                  throw new Error("TestPassed");
+                  throw new SuppressedError("TestPassed");
                 },
                 cancel(reason) {},
               }),
@@ -275,7 +275,7 @@ describe("streaming", () => {
                 async pull(controller) {
                   controller.enqueue("PASS");
                   controller.close();
-                  throw new Error("FAIL");
+                  throw new SuppressedError("FAIL");
                 },
               });
               console.log("after constructing ReadableStream");
@@ -1363,12 +1363,12 @@ it("should support promise returned from error", async () => {
       }
 
       if (e.message.endsWith("/async-rejected")) {
-        throw new Error("");
+        throw new SuppressedError();
       }
 
       if (e.message.endsWith("/async-rejected-pending")) {
         await Bun.sleep(100);
-        throw new Error("");
+        throw new SuppressedError();
       }
 
       if (e.message.endsWith("/async-pending")) {

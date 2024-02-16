@@ -923,7 +923,7 @@ describe("node:http", () => {
 
   test("test server internal error, issue#4298", done => {
     const server = createServer((req, res) => {
-      throw Error("throw an error here.");
+      throw SuppressedError("throw an error here.");
     });
     server.listen({ port: 0 }, async (_err, host, port) => {
       try {

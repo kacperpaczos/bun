@@ -4075,7 +4075,7 @@ pub const Expect = struct {
                 .Fulfilled => {},
                 .Rejected => {
                     // TODO throw the actual rejection error
-                    globalObject.bunVM().onUnhandledError(globalObject, result);
+                    globalObject.bunVM().runErrorHandler(result, null);
                     globalObject.throw("Matcher `{s}` returned a promise that rejected", .{matcher_name});
                     return false;
                 },
