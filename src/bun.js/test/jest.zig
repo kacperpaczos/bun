@@ -57,6 +57,7 @@ pub const Tag = enum(u3) {
     only,
     skip,
     todo,
+    fixme,
 };
 const debug = Output.scoped(.jest, false);
 pub const TestRunner = struct {
@@ -185,7 +186,12 @@ pub const TestRunner = struct {
         onTestFail: OnTestUpdate,
         onTestSkip: OnTestUpdate,
         onTestTodo: OnTestUpdate,
+        onTestFixme: OnTestUpdate,
     };
+
+    pub fn reportStart(this: *TestRunner, test_id: Test.ID) void {
+        this.callback.onTestStart(this.callback, test_id);
+    }
 
     pub fn reportPass(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*DescribeScope) void {
         this.tests.items(.status)[test_id] = .pass;
@@ -205,6 +211,11 @@ pub const TestRunner = struct {
     pub fn reportTodo(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope) void {
         this.tests.items(.status)[test_id] = .todo;
         this.callback.onTestTodo(this.callback, test_id, file, label, 0, 0, parent);
+    }
+
+    pub fn reportFixme(this: *TestRunner, test_id: Test.ID, file: string, label: string, parent: ?*DescribeScope) void {
+        this.tests.items(.status)[test_id] = .fixme;
+        this.callback.onTestFixme(this.callback, test_id, file, label, 0, 0, parent);
     }
 
     pub fn addTestCount(this: *TestRunner, count: u32) u32 {
@@ -255,6 +266,7 @@ pub const TestRunner = struct {
             fail,
             skip,
             todo,
+            fixme,
             fail_because_todo_passed,
         };
     };
@@ -340,6 +352,11 @@ pub const Jest = struct {
         );
         test_fn.put(
             globalObject,
+            ZigString.static("fixme"),
+            JSC.NewFunction(globalObject, ZigString.static("fixme"), 2, ThisTestScope.fixme, false),
+        );
+        test_fn.put(
+            globalObject,
             ZigString.static("if"),
             JSC.NewFunction(globalObject, ZigString.static("if"), 2, ThisTestScope.callIf, false),
         );
@@ -347,6 +364,16 @@ pub const Jest = struct {
             globalObject,
             ZigString.static("skipIf"),
             JSC.NewFunction(globalObject, ZigString.static("skipIf"), 2, ThisTestScope.skipIf, false),
+        );
+        test_fn.put(
+            globalObject,
+            ZigString.static("todoIf"),
+            JSC.NewFunction(globalObject, ZigString.static("todoIf"), 2, ThisTestScope.todoIf, false),
+        );
+        test_fn.put(
+            globalObject,
+            ZigString.static("fixmeIf"),
+            JSC.NewFunction(globalObject, ZigString.static("fixmeIf"), 2, ThisTestScope.fixmeIf, false),
         );
         test_fn.put(
             globalObject,
@@ -377,6 +404,11 @@ pub const Jest = struct {
         );
         describe.put(
             globalObject,
+            ZigString.static("fixme"),
+            JSC.NewFunction(globalObject, ZigString.static("fixme"), 2, ThisDescribeScope.fixme, false),
+        );
+        describe.put(
+            globalObject,
             ZigString.static("if"),
             JSC.NewFunction(globalObject, ZigString.static("if"), 2, ThisDescribeScope.callIf, false),
         );
@@ -384,6 +416,16 @@ pub const Jest = struct {
             globalObject,
             ZigString.static("skipIf"),
             JSC.NewFunction(globalObject, ZigString.static("skipIf"), 2, ThisDescribeScope.skipIf, false),
+        );
+        describe.put(
+            globalObject,
+            ZigString.static("todoIf"),
+            JSC.NewFunction(globalObject, ZigString.static("todoIf"), 2, ThisDescribeScope.todoIf, false),
+        );
+        describe.put(
+            globalObject,
+            ZigString.static("fixmeIf"),
+            JSC.NewFunction(globalObject, ZigString.static("fixmeIf"), 2, ThisDescribeScope.fixmeIf, false),
         );
         describe.put(
             globalObject,
@@ -568,16 +610,28 @@ pub const TestScope = struct {
         return createScope(globalThis, callframe, "test.todo()", true, .todo);
     }
 
+    pub fn fixme(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createScope(globalThis, callframe, "test.fixme()", true, .fixme);
+    }
+
     pub fn each(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
         return createEach(globalThis, callframe, "test.each()", "each", true);
     }
 
     pub fn callIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createIfScope(globalThis, callframe, "test.if()", "if", TestScope, false);
+        return createIfScope(globalThis, callframe, "test.if()", "if", TestScope, false, .pass);
     }
 
     pub fn skipIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createIfScope(globalThis, callframe, "test.skipIf()", "skipIf", TestScope, true);
+        return createIfScope(globalThis, callframe, "test.skipIf()", "skipIf", TestScope, true, .skip);
+    }
+
+    pub fn todoIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createIfScope(globalThis, callframe, "test.todoIf()", "todoIf", TestScope, true, .todo);
+    }
+
+    pub fn fixmeIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createIfScope(globalThis, callframe, "test.fixmeIf()", "fixmeIf", TestScope, true, .fixme);
     }
 
     pub fn onReject(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
@@ -649,7 +703,13 @@ pub const TestScope = struct {
             vm.autoGarbageCollect();
         }
         JSC.markBinding(@src());
-        debug("test({})", .{bun.fmt.QuotedFormatter{ .text = this.label }});
+
+        debug("test({})", .{bun.fmt.quote(this.label)});
+        if (Output.is_github_action) {
+            const display_label = if (this.label.len > 0) this.label else "test";
+            Output.printErrorln("::group::{s}", .{display_label});
+            Output.flush();
+        }
 
         var initial_value = JSValue.zero;
         if (test_elapsed_timer) |timer| {
@@ -1034,16 +1094,28 @@ pub const DescribeScope = struct {
         return createScope(globalThis, callframe, "describe.todo()", false, .todo);
     }
 
+    pub fn fixme(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createScope(globalThis, callframe, "describe.fixme()", false, .fixme);
+    }
+
     pub fn each(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
         return createEach(globalThis, callframe, "describe.each()", "each", false);
     }
 
     pub fn callIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createIfScope(globalThis, callframe, "describe.if()", "if", DescribeScope, false);
+        return createIfScope(globalThis, callframe, "describe.if()", "if", DescribeScope, false, .pass);
     }
 
     pub fn skipIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
-        return createIfScope(globalThis, callframe, "describe.skipIf()", "skipIf", DescribeScope, true);
+        return createIfScope(globalThis, callframe, "describe.skipIf()", "skipIf", DescribeScope, true, .skip);
+    }
+
+    pub fn todoIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createIfScope(globalThis, callframe, "describe.todoIf()", "todoIf", DescribeScope, true, .todo);
+    }
+
+    pub fn fixmeIf(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+        return createIfScope(globalThis, callframe, "describe.fixmeIf()", "fixmeIf", DescribeScope, true, .fixme);
     }
 
     pub fn run(this: *DescribeScope, globalObject: *JSC.JSGlobalObject, callback: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
@@ -1052,7 +1124,8 @@ pub const DescribeScope = struct {
         defer callback.unprotect();
         this.push();
         defer this.pop();
-        debug("describe({})", .{bun.fmt.QuotedFormatter{ .text = this.label }});
+
+        debug("describe({})", .{bun.fmt.quote(this.label)});
 
         if (callback == .zero) {
             this.runTests(globalObject);
@@ -1099,7 +1172,12 @@ pub const DescribeScope = struct {
 
         var i: TestRunner.Test.ID = 0;
 
-        if (this.shouldEvaluateScope()) {
+        if (this.shouldEvaluateScope() and this.value != .zero) {
+            if (Output.is_github_action) {
+                Output.printErrorln("::group::{s}", .{this.label});
+                Output.flush();
+            }
+
             if (this.runCallback(globalObject, .beforeAll)) |err| {
                 globalObject.bunVM().onUnhandledError(globalObject, err);
                 while (i < end) {
@@ -1154,11 +1232,16 @@ pub const DescribeScope = struct {
             return;
         }
 
-        if (this.shouldEvaluateScope()) {
+        if (this.shouldEvaluateScope() and this.value != .zero) {
             // Run the afterAll callbacks, in reverse order
             // unless there were no tests for this scope
             if (this.execCallback(globalThis, .afterAll)) |err| {
                 globalThis.bunVM().onUnhandledError(globalThis, err);
+            }
+
+            if (Output.is_github_action) {
+                Output.printErrorln("::endgroup::", .{});
+                Output.flush();
             }
         }
 
@@ -1208,8 +1291,11 @@ pub const WrappedTestScope = struct {
     pub const only = wrapTestFunction("test", TestScope.only);
     pub const skip = wrapTestFunction("test", TestScope.skip);
     pub const todo = wrapTestFunction("test", TestScope.todo);
+    pub const fixme = wrapTestFunction("test", TestScope.fixme);
     pub const callIf = wrapTestFunction("test", TestScope.callIf);
     pub const skipIf = wrapTestFunction("test", TestScope.skipIf);
+    pub const todoIf = wrapTestFunction("test", TestScope.todoIf);
+    pub const fixmeIf = wrapTestFunction("test", TestScope.fixmeIf);
     pub const each = wrapTestFunction("test", TestScope.each);
 };
 
@@ -1218,8 +1304,11 @@ pub const WrappedDescribeScope = struct {
     pub const only = wrapTestFunction("describe", DescribeScope.only);
     pub const skip = wrapTestFunction("describe", DescribeScope.skip);
     pub const todo = wrapTestFunction("describe", DescribeScope.todo);
+    pub const fixme = wrapTestFunction("describe", DescribeScope.fixme);
     pub const callIf = wrapTestFunction("describe", DescribeScope.callIf);
     pub const skipIf = wrapTestFunction("describe", DescribeScope.skipIf);
+    pub const todoIf = wrapTestFunction("describe", DescribeScope.todoIf);
+    pub const fixmeIf = wrapTestFunction("describe", DescribeScope.fixmeIf);
     pub const each = wrapTestFunction("describe", DescribeScope.each);
 };
 
@@ -1384,10 +1473,15 @@ pub const TestRunnerTask = struct {
         }
 
         processTestResult(this, this.globalThis, result, test_, test_id, describe);
+
+        if (Output.is_github_action) {
+            Output.printErrorln("::endgroup::", .{});
+            Output.flush();
+        }
     }
 
     fn processTestResult(this: *TestRunnerTask, globalThis: *JSC.JSGlobalObject, result: Result, test_: TestScope, test_id: u32, describe: *DescribeScope) void {
-        switch (result.forceTODO(test_.tag == .todo)) {
+        switch (result.fromTag(test_.tag)) {
             .pass => |count| Jest.runner.?.reportPass(
                 test_id,
                 this.source_file_path,
@@ -1412,6 +1506,7 @@ pub const TestRunnerTask = struct {
             ),
             .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe),
             .todo => Jest.runner.?.reportTodo(test_id, this.source_file_path, test_.label, describe),
+            .fixme => Jest.runner.?.reportFixme(test_id, this.source_file_path, test_.label, describe),
             .fail_because_todo_passed => |count| {
                 Output.prettyErrorln("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` or check that test is correct.<r>", .{});
                 Jest.runner.?.reportFailure(
@@ -1460,16 +1555,22 @@ pub const Result = union(TestRunner.Test.Status) {
     fail: u32,
     skip: void,
     todo: void,
+    fixme: u32,
     fail_because_todo_passed: u32,
 
-    pub fn forceTODO(this: Result, is_todo: bool) Result {
-        if (is_todo and this == .pass)
-            return .{ .fail_because_todo_passed = this.pass };
-
-        if (is_todo and this == .fail) {
-            return .{ .todo = {} };
-        }
-        return this;
+    pub fn fromTag(this: Result, tag: Tag) Result {
+        return switch (tag) {
+            .todo => switch (this) {
+                .pass => .{ .fail_because_todo_passed = this.pass },
+                .fail => .{ .todo = {} },
+                else => this,
+            },
+            .fixme => switch (this) {
+                .fail => .{ .fixme = this.fail },
+                else => this,
+            },
+            else => this,
+        };
     }
 };
 
@@ -1634,7 +1735,9 @@ inline fn createIfScope(
     comptime signature: string,
     comptime Scope: type,
     comptime is_skip: bool,
+    comptime tag: Tag,
 ) JSValue {
+    _ = tag;
     const arguments = callframe.arguments(1);
     const args = arguments.slice();
 
