@@ -436,7 +436,7 @@ declare module "bun:test" {
     ) => void;
     /**
      * Marks this test as `todo`, if `condition` is true.
-     * 
+     *
      * @param condition if the test should be marked as `todo`
      */
     todoIf(
@@ -448,7 +448,7 @@ declare module "bun:test" {
     ) => void;
     /**
      * Marks this test as `fixme`, if `condition` is true.
-     * 
+     *
      * @param condition if the test should be marked as `fixme`
      */
     fixmeIf(
